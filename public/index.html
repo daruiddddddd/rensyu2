@@ -521,10 +521,12 @@ function handleImageUpload(event) {
             document.body.removeChild(a);
         }
 
-        socket.on('connect', () => {
-            console.log('Connected to server!');
-            showMessage('Connected to server!');
-        });
+       socket.on('connect', () => {
+    console.log('Connected to server!');
+    showMessage('Connected to server!');
+    socket.emit('getInitialDraw');
+});
+
 
         socket.on('initialDraw', (initialShapes) => {
             shapes = initialShapes;
