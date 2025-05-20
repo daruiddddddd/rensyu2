@@ -1,5 +1,556 @@
 <!DOCTYPE html>
 <html lang="ja">
-<head><meta charset="UTF-8"><title>準備中</title></head>
-<body><h2>あとで index.html を差し替えてください。</h2></body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム画像注釈ツール</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+        }
+
+        #controls {
+            top: 0;
+            left: 0;
+            z-index: 100;
+            display: flex;
+            gap: 4px;
+            padding: 8px;
+            background-color: #e0e0e0;
+            border-bottom: 1px solid #ccc;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        #canvasContainer {
+            display: flex;
+            justify-content: center;
+            /* A3縦向きのサイズを指定 */
+            width: 297mm;
+            height: 420mm;
+            max-width: 100%; /* 最大幅を100%に設定 */
+        }
+
+        canvas {
+            background-color: white;
+            cursor: crosshair;
+            /* canvasのサイズをcontainerに合わせる */
+            width: 100%;
+            height: 100%;
+            max-width: 100%; /* 最大幅を100%に設定 */
+            height: auto;      /* 高さを自動に設定 */
+        }
+
+        .button {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f0f0f0;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s ease;
+            font-family: 'Press Start 2P', cursive;
+        }
+        .button:hover {
+                background-color: #ddd;
+        }
+
+        .button.active {
+                background-color: #b0b0b0;
+        }
+
+        #colorPalette {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            justify-content: center; /* パレットを中央に配置 */
+        }
+        .colorButton {
+                width: 24px;
+                height: 24px;
+                border: 1px solid #ccc;
+                cursor: pointer;
+                border-radius: 50%;
+        }
+
+        .colorButton.active {
+                border: 2px solid black;
+                outline: 2px solid #007bff;
+        }
+
+        #imageUpload {
+                display: none;
+        }
+
+        #messageBox {
+                position: fixed;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: rgba(0, 123, 255, 0.8);
+                color: white;
+                padding: 10px 20px;
+                border-radius: 4px;
+                z-index: 1000;
+                opacity: 0;
+                transition: opacity 0.3s ease-in-out;
+        }
+
+        .show-message {
+                opacity: 1;
+        }
+
+        @media (max-width: 768px) {
+            #controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            canvas {
+                max-width: 100%;
+                height: auto;
+            }
+            #canvasContainer {
+                width: 100%; /* 親要素の幅に合わせる */
+                height: auto;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="controls" class="bg-gray-200 p-2 rounded-md shadow-md">
+        <button id="lineButton" class="button">線</button>
+        <button id="arrowButton" class="button">矢印</button>
+        <button id="dashButton" class="button">破線</button>
+        <button id="undoButton" class="button">戻る</button>
+        <button id="clearButton" class="button">全消去</button>
+        <button id="clearDrawButton" class="button">描画のみ消去</button>
+        <button id="rectButton" class="button">■</button>
+        <button id="circleButton" class="button">●</button>
+        <button id="triangleButton" class="button">▲</button>
+        <input type="file" id="imageUpload" accept="image/*">
+        <label for="imageUpload" class="button">画像アップロード</label>
+        <button id="saveButton" class="button">保存</button>
+        <div id="colorPalette">
+            <div class="colorButton" style="background-color: black;" data-color="black"></div>
+            <div class="colorButton" style="background-color: red;" data-color="red"></div>
+            <div class="colorButton" style="background-color: blue;" data-color="blue"></div>
+            <div class="colorButton" style="background-color: green;" data-color="green"></div>
+            <div class="colorButton" style="background-color: yellow;" data-color="yellow"></div>
+            <div class="colorButton" style="background-color: orange;" data-color="orange"></div>
+            <div class="colorButton" style="background-color: purple;" data-color="purple"></div>
+            <div class="colorButton" style="background-color: pink;" data-color="pink"></div>
+        </div>
+    </div>
+
+    <div id="canvasContainer">
+        <canvas id="mainCanvas" ></canvas>
+    </div>
+
+    <div id="messageBox"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const controls = document.getElementById('controls');
+        const lineButton = document.getElementById('lineButton');
+        const arrowButton = document.getElementById('arrowButton');
+        const dashButton = document.getElementById('dashButton');
+        const undoButton = document.getElementById('undoButton');
+        const clearButton = document.getElementById('clearButton');
+        const clearDrawButton = document.getElementById('clearDrawButton');
+        const rectButton = document.getElementById('rectButton');
+        const circleButton = document.getElementById('circleButton');
+        const triangleButton = document.getElementById('triangleButton');
+        const imageUpload = document.getElementById('imageUpload');
+        const saveButton = document.getElementById('saveButton');
+        const colorPalette = document.getElementById('colorPalette');
+        const messageBox = document.getElementById('messageBox');
+
+        let currentColor = 'black';
+        let drawing = false;
+        let startX, startY;
+        let endX, endY;
+        let tool = 'line';
+        let lineType = 'solid';
+        let shapes = [];
+        let historyIndex = -1;
+        let isFill = false; // 塗りつぶしフラグ
+        let isSecondClick = false;
+        let currentShapeType = '';
+        let canvasWidth = 297;  // A3縦サイズのmm
+        let canvasHeight = 420;
+        let backgroundImage = null;
+        let imageRotationAngle = 0; // 画像の回転角度
+        const mmPerPixel = 96 / 25.4;  // 1インチあたりのピクセル数(96) / 1インチあたりのmm数(25.4)
+
+        // A3サイズのcanvasをピクセル単位で設定
+        canvas.width = canvasWidth * mmPerPixel;
+        canvas.height = canvasHeight * mmPerPixel;
+
+        const colorButtons = document.querySelectorAll('.colorButton');
+
+        const socket = io();
+
+        // イベントリスナー
+        lineButton.addEventListener('click', () => { setTool('line'); });
+        arrowButton.addEventListener('click', () => { setTool('arrow'); });
+        dashButton.addEventListener('click', () => { setTool('dash'); });
+        undoButton.addEventListener('click', undo);
+        clearButton.addEventListener('click', clearCanvas);
+        clearDrawButton.addEventListener('click', clearDraw);
+        rectButton.addEventListener('click', () => { setTool('rect'); });
+        circleButton.addEventListener('click', () => { setTool('circle'); });
+        triangleButton.addEventListener('click', () => { setTool('triangle'); });
+        imageUpload.addEventListener('change', handleImageUpload);
+        saveButton.addEventListener('click', saveCanvas);
+
+        colorButtons.forEach(button => {
+            button.addEventListener('click', changeColor);
+        });
+
+        // 回転機能追加
+        const rotateButton = document.createElement('button');
+        rotateButton.textContent = '回転';
+        rotateButton.className = 'button';
+        rotateButton.id = 'rotateButton';
+        controls.appendChild(rotateButton);
+        rotateButton.addEventListener('click', rotateImage); // 画像回転関数を割り当て
+
+        function setTool(newTool) {
+            if (tool === newTool && (newTool === 'rect' || newTool === 'circle' || newTool === 'triangle')) {
+                // 2回目のクリックで塗りつぶしトグル
+                isFill = !isFill;
+            } else {
+                isFill = false;
+            }
+
+            tool = newTool;
+
+            if (newTool === 'dash') {
+                lineType = 'dashed';
+            } else {
+                lineType = 'solid';
+            }
+
+            // ボタン表示更新
+            rectButton.textContent = isFill ? '■' : '□';
+            circleButton.textContent = isFill ? '●' : '●';
+            triangleButton.textContent = isFill ? '▲' : '△';
+
+            // activeクラス更新
+            lineButton.classList.toggle('active', tool === 'line');
+            arrowButton.classList.toggle('active', tool === 'arrow');
+            dashButton.classList.toggle('active', tool === 'dash');
+            rectButton.classList.toggle('active', tool === 'rect');
+            circleButton.classList.toggle('active', tool === 'circle');
+            triangleButton.classList.toggle('active', tool === 'triangle');
+        }
+
+        function changeColor(event) {
+            currentColor = event.target.dataset.color;
+            colorButtons.forEach(button => {
+                button.classList.remove('active');
+            });
+            event.target.classList.add('active');
+        }
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseleave', stopDrawing);
+
+        function startDrawing(event) {
+            drawing = true;
+            startX = event.offsetX;
+            startY = event.offsetY;
+            endX = startX;
+            endY = startY;
+
+            if (tool === 'dash') {
+                 ctx.setLineDash([5, 5]); // 点線のパターンを設定
+            } else {
+                 ctx.setLineDash([]);
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+
+            if (tool === 'rect' || tool === 'circle' || tool === 'triangle') {
+                currentShapeType = tool;
+            }
+        }
+
+        function draw(event) {
+            if (!drawing) return;
+
+            endX = event.offsetX;
+            endY = event.offsetY;
+
+            const currentShape = {
+                type: tool,
+                startX: startX,
+                startY: startY,
+                endX: endX,
+                endY: endY,
+                color: currentColor,
+                lineType: lineType,
+                isFill: isFill,
+            };
+
+            drawAll();
+            drawLine(currentShape);
+        }
+
+        function stopDrawing() {
+            if (!drawing) return;
+            drawing = false;
+
+            const currentShape = {
+                type: tool,
+                startX: startX,
+                startY: startY,
+                endX: endX,
+                endY: endY,
+                color: currentColor,
+                lineType: lineType,
+                isFill: isFill,
+            };
+
+            shapes.push(currentShape);
+            historyIndex++;
+            socket.emit('draw', shapes);
+            drawAll();
+        }
+
+        function drawAll() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+             // 画像を描画
+            if (backgroundImage) {
+                ctx.save(); // 現在のコンテキストを保存
+                ctx.translate(canvas.width / 2, canvas.height / 2); // 画像の中心を回転の中心に移動
+                ctx.rotate(imageRotationAngle * Math.PI / 180); // 画像を回転
+                ctx.translate(-canvas.width / 2, -canvas.height / 2); // 回転の中心を元の位置に戻す
+                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+                ctx.restore(); // 保存したコンテキストを復元
+            }
+            shapes.forEach(shape => {
+                drawLine(shape);
+            });
+        }
+
+        function drawLine(shape) {
+            ctx.strokeStyle = shape.color;
+            ctx.lineWidth = 2;
+            ctx.fillStyle = shape.color;
+            if (shape.type === 'dash' || shape.lineType === 'dashed') {
+                ctx.setLineDash([5, 5]);
+            } else {
+                ctx.setLineDash([]);
+            }
+            ctx.beginPath();
+            ctx.moveTo(shape.startX, shape.startY);
+
+            if (shape.type === 'line' || shape.type === 'dash') {
+                ctx.lineTo(shape.endX, shape.endY);
+                ctx.stroke();
+            } else if (shape.type === 'arrow') {
+                const headlen = 10;
+                const dx = shape.endX - shape.startX;
+                const dy = shape.endY - shape.startY;
+                const angle = Math.atan2(dy, dx);
+                ctx.lineTo(shape.endX, shape.endY);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(shape.endX, shape.endY);
+                ctx.lineTo(shape.endX - headlen * Math.cos(angle - Math.PI / 6), shape.endY - headlen * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(shape.endX - headlen * Math.cos(angle + Math.PI / 6), shape.endY - headlen * Math.sin(angle + Math.PI / 6));
+                ctx.lineTo(shape.endX, shape.endY);
+                ctx.closePath();
+                ctx.fill();
+            } else if (shape.type === 'rect') {
+                const width = shape.endX - shape.startX;
+                const height = shape.endY - shape.startY;
+                if (shape.isFill) {
+                    ctx.fillRect(shape.startX, shape.startY, width, height);
+                } else {
+                    ctx.strokeRect(shape.startX, shape.startY, width, height);
+                }
+            } else if (shape.type === 'circle') {
+                const radius = Math.sqrt(Math.pow(shape.endX - shape.startX, 2) + Math.pow(shape.endY - shape.startY, 2));
+                ctx.beginPath();
+                ctx.arc(shape.startX, shape.startY, radius, 0, 2 * Math.PI);
+                if (shape.isFill) {
+                    ctx.fill();
+                } else {
+                    ctx.stroke();
+                }
+            } else if (shape.type === 'triangle') {
+                const baseWidth = shape.endX - shape.startX;
+                const triangleHeight = shape.endY - shape.startY;
+
+                // 正三角形の頂点の座標を計算
+                const topX = shape.startX + baseWidth / 2;
+                const topY = shape.startY - (Math.sqrt(3) / 2) * baseWidth;
+
+                ctx.beginPath();
+                ctx.moveTo(shape.startX, shape.startY);
+                ctx.lineTo(shape.endX, shape.startY);  //底辺
+                ctx.lineTo(topX, topY);             //高さ
+                ctx.closePath();
+                if (shape.isFill) {
+                    ctx.fill();
+                } else {
+                    ctx.stroke();
+                }
+            }
+        }
+
+        function undo() {
+            if (historyIndex >= 0) {
+                shapes.pop();
+                historyIndex--;
+                drawAll();
+                socket.emit('draw', shapes);
+            }
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            shapes = [];
+            historyIndex = -1;
+            backgroundImage = null;
+            imageRotationAngle = 0; // 回転角度をリセット
+            socket.emit('draw', shapes);
+        }
+
+        function clearDraw() {
+            const initialBackgroundImage = backgroundImage;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+             if (initialBackgroundImage) {
+                ctx.save();
+                ctx.translate(canvas.width / 2, canvas.height / 2);
+                ctx.rotate(imageRotationAngle * Math.PI / 180);
+                ctx.translate(-canvas.width / 2, -canvas.height / 2);
+                ctx.drawImage(initialBackgroundImage, 0, 0, canvas.width, canvas.height);
+                ctx.restore();
+             }
+            shapes = [];
+            historyIndex = -1;
+            imageRotationAngle = 0;
+            socket.emit('draw', shapes);
+        }
+
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const a3WidthMM = 297;
+                        const a3HeightMM = 420;
+                        const dpi = 96;
+                        const mmPerInch = 25.4;
+
+                        // A3のピクセルサイズを計算
+                        const a3WidthPixels = (a3WidthMM / mmPerInch) * dpi;
+                        const a3HeightPixels = (a3HeightMM / mmPerInch) * dpi;
+
+                        canvasWidth = a3WidthPixels;
+                        canvasHeight = a3HeightPixels;
+
+                        canvas.width = a3WidthPixels;
+                        canvas.height = a3HeightPixels;
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        imageRotationAngle = 0; // リセット
+
+                        const imgAspectRatio = img.width / img.height;
+                        const canvasAspectRatio = a3WidthPixels / a3HeightPixels;
+
+                        let drawWidth = a3WidthPixels;
+                        let drawHeight = a3HeightPixels;
+
+                         // 画像のサイズをcanvasに合わせる
+                        if (imgAspectRatio > canvasAspectRatio) {
+                            drawHeight = a3WidthPixels / imgAspectRatio;
+                            drawWidth = a3WidthPixels;
+                        } else {
+                            drawWidth = a3HeightPixels * imgAspectRatio;
+                        }
+                        const xOffset = (a3WidthPixels - drawWidth) / 2;
+                        const yOffset = (a3HeightPixels - drawHeight) / 2;
+
+                        backgroundImage = img;
+                        ctx.drawImage(img, xOffset, yOffset, drawWidth, drawHeight);
+                        shapes = [];
+                        historyIndex = -1;
+                        socket.emit('draw', shapes);
+                    };
+                    img.src = e.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function saveCanvas() {
+            const dataURL = canvas.toDataURL('image/jpeg');
+            const a = document.createElement('a');
+            a.href = dataURL;
+            a.download = 'canvas_image.jpg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        socket.on('connect', () => {
+            console.log('Connected to server!');
+            showMessage('Connected to server!');
+        });
+
+        socket.on('initialDraw', (initialShapes) => {
+            shapes = initialShapes;
+            historyIndex = shapes.length -1;
+            drawAll();
+        });
+
+        socket.on('draw', (newShapes) => {
+            shapes = newShapes;
+            historyIndex = shapes.length - 1;
+            drawAll();
+        });
+
+        function showMessage(message) {
+            messageBox.textContent = message;
+            messageBox.classList.add('show-message');
+            setTimeout(() => {
+                messageBox.classList.remove('show-message');
+            }, 3000);
+        }
+
+        function rotateImage() {
+            imageRotationAngle += 90;
+            drawAll();
+            socket.emit('rotateImage', imageRotationAngle); // サーバーに画像の回転角度を送信
+        }
+
+        socket.on('rotateImage', (newRotation) => {
+            imageRotationAngle = newRotation;
+            drawAll();
+        });
+
+        socket.emit('getInitialDraw');
+    </script>
+</body>
 </html>
