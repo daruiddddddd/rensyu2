@@ -552,12 +552,22 @@ function handleImageUpload(event) {
             socket.emit('rotateImage', imageRotationAngle); // サーバーに画像の回転角度を送信
         }
 
-        socket.on('rotateImage', (newRotation) => {
-            imageRotationAngle = newRotation;
-            drawAll();
-        });
+socket.on('rotateImage', (newRotation) => {
+    imageRotationAngle = newRotation;
+    drawAll();
+});
 
-        socket.emit('getInitialDraw');
+socket.emit('getInitialDraw');
+
+socket.on('imageUrl', (url) => {
+    const img = new Image();
+    img.onload = () => {
+        backgroundImage = img;
+        drawAll();
+    };
+    img.src = url;
+});
+
     </script>
 </body>
 </html>
