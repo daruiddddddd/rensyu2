@@ -49,7 +49,7 @@
             width: 100%;
             height: 100%;
             max-width: 100%; /* 最大幅を100%に設定 */
-            height: auto;      /* 高さを自動に設定 */
+            height: auto;    /* 高さを自動に設定 */
         }
 
         .button {
@@ -132,12 +132,13 @@
         <button id="lineButton" class="button">線</button>
         <button id="arrowButton" class="button">矢印</button>
         <button id="dashButton" class="button">破線</button>
-        <button id="undoButton" class="button">戻る</button>
-        <button id="clearButton" class="button">全消去</button>
-        <button id="clearDrawButton" class="button">描画のみ消去</button>
         <button id="rectButton" class="button">■</button>
         <button id="circleButton" class="button">●</button>
         <button id="triangleButton" class="button">▲</button>
+        <button id="numberButton" class="button">番号</button>
+        <button id="undoButton" class="button">戻る</button>
+        <button id="clearButton" class="button">全消去</button>
+        <button id="clearDrawButton" class="button">描画のみ消去</button>
         <input type="file" id="imageUpload" accept="image/*">
         <label for="imageUpload" class="button">画像アップロード</label>
         <button id="saveButton" class="button">保存</button>
@@ -177,23 +178,27 @@
         const saveButton = document.getElementById('saveButton');
         const colorPalette = document.getElementById('colorPalette');
         const messageBox = document.getElementById('messageBox');
+        const numberButton = document.getElementById('numberButton'); // Get the new number button
 
         let currentColor = 'black';
         let drawing = false;
         let startX, startY;
         let endX, endY;
-        let tool = 'line';
+        let tool = 'line'; // Default tool
         let lineType = 'solid';
         let shapes = [];
         let historyIndex = -1;
         let isFill = false; // 塗りつぶしフラグ
-        let isSecondClick = false;
         let currentShapeType = '';
         let canvasWidth = 297;  // A3縦サイズのmm
         let canvasHeight = 420;
         let backgroundImage = null;
         let imageRotationAngle = 0; // 画像の回転角度
         const mmPerPixel = 96 / 25.4;  // 1インチあたりのピクセル数(96) / 1インチあたりのmm数(25.4)
+
+        // New state variables for numbering tool
+        let currentNumber = 1; // Current number to place
+        let numberToolActive = false; // Flag to indicate if numbering tool is active
 
         // A3サイズのcanvasをピクセル単位で設定
         canvas.width = canvasWidth * mmPerPixel;
@@ -203,7 +208,7 @@
 
         const socket = io();
 
-        // イベントリスナー
+        // Event Listeners
         lineButton.addEventListener('click', () => { setTool('line'); });
         arrowButton.addEventListener('click', () => { setTool('arrow'); });
         dashButton.addEventListener('click', () => { setTool('dash'); });
@@ -215,6 +220,7 @@
         triangleButton.addEventListener('click', () => { setTool('triangle'); });
         imageUpload.addEventListener('change', handleImageUpload);
         saveButton.addEventListener('click', saveCanvas);
+        numberButton.addEventListener('click', () => { setTool('number'); }); // Event listener for number button
 
         colorButtons.forEach(button => {
             button.addEventListener('click', changeColor);
@@ -228,36 +234,58 @@
         controls.appendChild(rotateButton);
         rotateButton.addEventListener('click', rotateImage); // 画像回転関数を割り当て
 
+        /**
+         * Sets the active drawing tool and updates button states.
+         * @param {string} newTool - The tool to activate ('line', 'arrow', 'dash', 'rect', 'circle', 'triangle', 'number').
+         */
         function setTool(newTool) {
-            if (tool === newTool && (newTool === 'rect' || newTool === 'circle' || newTool === 'triangle')) {
-                // 2回目のクリックで塗りつぶしトグル
-                isFill = !isFill;
-            } else {
+            // Reset fill state for non-shape tools or if switching from a shape tool
+            if (tool !== newTool || !(newTool === 'rect' || newTool === 'circle' || newTool === 'triangle')) {
                 isFill = false;
             }
 
-            tool = newTool;
+            // Specific logic for number tool activation/deactivation
+            if (newTool === 'number') {
+                if (tool === 'number') { // If already numbering tool, deactivate and reset
+                    numberToolActive = false;
+                    currentNumber = 1; // Reset counter
+                    tool = 'line'; // Default to line after deactivating number tool
+                } else {
+                    numberToolActive = true;
+                    currentNumber = 1; // Always start from 1 when activating
+                    tool = newTool;
+                }
+            } else {
+                numberToolActive = false; // Deactivate number tool if another tool is selected
+                tool = newTool;
+            }
 
-            if (newTool === 'dash') {
+            // Set line type based on tool
+            if (tool === 'dash') {
                 lineType = 'dashed';
             } else {
                 lineType = 'solid';
             }
 
-            // ボタン表示更新
+            // Update button text for shapes based on fill state
             rectButton.textContent = isFill ? '■' : '□';
             circleButton.textContent = isFill ? '●' : '●';
             triangleButton.textContent = isFill ? '▲' : '△';
 
-            // activeクラス更新
+            // Update active class for all buttons
             lineButton.classList.toggle('active', tool === 'line');
             arrowButton.classList.toggle('active', tool === 'arrow');
             dashButton.classList.toggle('active', tool === 'dash');
             rectButton.classList.toggle('active', tool === 'rect');
             circleButton.classList.toggle('active', tool === 'circle');
             triangleButton.classList.toggle('active', tool === 'triangle');
+            numberButton.classList.toggle('active', tool === 'number'); // Toggle for number button
         }
 
+        /**
+         * Changes the current drawing color.
+         * @param {Event} event - The click event.
+         */
         function changeColor(event) {
             currentColor = event.target.dataset.color;
             colorButtons.forEach(button => {
@@ -271,7 +299,34 @@
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseleave', stopDrawing);
 
+        /**
+         * Starts the drawing process or places a number if the numbering tool is active.
+         * @param {MouseEvent} event - The mouse down event.
+         */
         function startDrawing(event) {
+            // Handle numbering tool separately as it's a click-based action
+            if (tool === 'number') {
+                if (currentNumber <= 100) {
+                    const x = event.offsetX;
+                    const y = event.offsetY;
+                    shapes.push({
+                        type: 'number',
+                        number: currentNumber,
+                        x: x,
+                        y: y,
+                        color: currentColor,
+                        fontSize: 20 // Font size for numbers
+                    });
+                    currentNumber++;
+                    drawAll();
+                    socket.emit('draw', shapes);
+                } else {
+                    showMessage('番号は100までです。');
+                }
+                return; // Exit here to prevent other drawing logic from running
+            }
+
+            // Standard drawing tool logic (lines, shapes)
             drawing = true;
             startX = event.offsetX;
             startY = event.offsetY;
@@ -279,9 +334,9 @@
             endY = startY;
 
             if (tool === 'dash') {
-                 ctx.setLineDash([5, 5]); // 点線のパターンを設定
+                ctx.setLineDash([5, 5]); // Set dashed line pattern
             } else {
-                 ctx.setLineDash([]);
+                ctx.setLineDash([]); // Reset to solid line
             }
 
             ctx.beginPath();
@@ -292,6 +347,10 @@
             }
         }
 
+        /**
+         * Draws the current shape while dragging.
+         * @param {MouseEvent} event - The mouse move event.
+         */
         function draw(event) {
             if (!drawing) return;
 
@@ -309,12 +368,15 @@
                 isFill: isFill,
             };
 
-            drawAll();
-            drawLine(currentShape);
+            drawAll(); // Clear and redraw all existing shapes
+            drawLine(currentShape); // Draw the current shape being dragged
         }
 
+        /**
+         * Stops the drawing process and adds the completed shape to the shapes array.
+         */
         function stopDrawing() {
-            if (!drawing) return;
+            if (!drawing) return; // Only proceed if drawing was active
             drawing = false;
 
             const currentShape = {
@@ -328,247 +390,290 @@
                 isFill: isFill,
             };
 
-            shapes.push(currentShape);
-            historyIndex++;
-            socket.emit('draw', shapes);
-            drawAll();
+            shapes.push(currentShape); // Add the completed shape to the array
+            historyIndex++; // Increment history index
+            socket.emit('draw', shapes); // Emit updated shapes to server
+            drawAll(); // Redraw everything
         }
 
+        /**
+         * Clears the canvas and redraws all stored shapes, including the background image.
+         */
         function drawAll() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-             // 画像を描画
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the entire canvas
+            // Draw background image if present
             if (backgroundImage) {
-                ctx.save(); // 現在のコンテキストを保存
-                ctx.translate(canvas.width / 2, canvas.height / 2); // 画像の中心を回転の中心に移動
-                ctx.rotate(imageRotationAngle * Math.PI / 180); // 画像を回転
-                ctx.translate(-canvas.width / 2, -canvas.height / 2); // 回転の中心を元の位置に戻す
-                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
-                ctx.restore(); // 保存したコンテキストを復元
+                ctx.save(); // Save current context state
+                ctx.translate(canvas.width / 2, canvas.height / 2); // Move origin to center for rotation
+                ctx.rotate(imageRotationAngle * Math.PI / 180); // Rotate image
+                ctx.translate(-canvas.width / 2, -canvas.height / 2); // Move origin back
+                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height); // Draw image
+                ctx.restore(); // Restore context state
             }
+            // Draw all stored shapes
             shapes.forEach(shape => {
                 drawLine(shape);
             });
         }
 
+        /**
+         * Draws a single shape on the canvas based on its properties.
+         * @param {Object} shape - The shape object to draw.
+         */
         function drawLine(shape) {
             ctx.strokeStyle = shape.color;
             ctx.lineWidth = 2;
-            ctx.fillStyle = shape.color;
+            ctx.fillStyle = shape.color; // Set fill style for filled shapes
+
+            // Set line dash pattern if applicable
             if (shape.type === 'dash' || shape.lineType === 'dashed') {
                 ctx.setLineDash([5, 5]);
             } else {
                 ctx.setLineDash([]);
             }
-            ctx.beginPath();
-            ctx.moveTo(shape.startX, shape.startY);
 
+            ctx.beginPath(); // Start a new path
+
+            // Drawing logic based on shape type
             if (shape.type === 'line' || shape.type === 'dash') {
+                ctx.moveTo(shape.startX, shape.startY);
                 ctx.lineTo(shape.endX, shape.endY);
                 ctx.stroke();
             } else if (shape.type === 'arrow') {
-                const headlen = 10;
+                const headlen = 10; // Length of arrow head
                 const dx = shape.endX - shape.startX;
                 const dy = shape.endY - shape.startY;
-                const angle = Math.atan2(dy, dx);
+                const angle = Math.atan2(dy, dx); // Angle of the line
+
+                ctx.moveTo(shape.startX, shape.startY);
                 ctx.lineTo(shape.endX, shape.endY);
-                ctx.stroke();
+                ctx.stroke(); // Draw the main line
+
+                // Draw arrow head
                 ctx.beginPath();
                 ctx.moveTo(shape.endX, shape.endY);
                 ctx.lineTo(shape.endX - headlen * Math.cos(angle - Math.PI / 6), shape.endY - headlen * Math.sin(angle - Math.PI / 6));
                 ctx.lineTo(shape.endX - headlen * Math.cos(angle + Math.PI / 6), shape.endY - headlen * Math.sin(angle + Math.PI / 6));
                 ctx.lineTo(shape.endX, shape.endY);
                 ctx.closePath();
-                ctx.fill();
+                ctx.fill(); // Fill the arrow head
             } else if (shape.type === 'rect') {
                 const width = shape.endX - shape.startX;
                 const height = shape.endY - shape.startY;
                 if (shape.isFill) {
-                    ctx.fillRect(shape.startX, shape.startY, width, height);
+                    ctx.fillRect(shape.startX, shape.startY, width, height); // Filled rectangle
                 } else {
-                    ctx.strokeRect(shape.startX, shape.startY, width, height);
+                    ctx.strokeRect(shape.startX, shape.startY, width, height); // Stroked rectangle
                 }
             } else if (shape.type === 'circle') {
                 const radius = Math.sqrt(Math.pow(shape.endX - shape.startX, 2) + Math.pow(shape.endY - shape.startY, 2));
                 ctx.beginPath();
-                ctx.arc(shape.startX, shape.startY, radius, 0, 2 * Math.PI);
+                ctx.arc(shape.startX, shape.startY, radius, 0, 2 * Math.PI); // Draw circle
                 if (shape.isFill) {
-                    ctx.fill();
+                    ctx.fill(); // Filled circle
                 } else {
-                    ctx.stroke();
+                    ctx.stroke(); // Stroked circle
                 }
             } else if (shape.type === 'triangle') {
                 const baseWidth = shape.endX - shape.startX;
-                const triangleHeight = shape.endY - shape.startY;
-
-                // 正三角形の頂点の座標を計算
+                // Calculate equilateral triangle vertices
                 const topX = shape.startX + baseWidth / 2;
-                const topY = shape.startY - (Math.sqrt(3) / 2) * baseWidth;
+                const topY = shape.startY - (Math.sqrt(3) / 2) * baseWidth; // Height for equilateral triangle
 
                 ctx.beginPath();
                 ctx.moveTo(shape.startX, shape.startY);
-                ctx.lineTo(shape.endX, shape.startY);  //底辺
-                ctx.lineTo(topX, topY);             //高さ
-                ctx.closePath();
+                ctx.lineTo(shape.endX, shape.startY);  // Base
+                ctx.lineTo(topX, topY);                // Apex
+                ctx.closePath(); // Close the path to form a triangle
                 if (shape.isFill) {
-                    ctx.fill();
+                    ctx.fill(); // Filled triangle
                 } else {
-                    ctx.stroke();
+                    ctx.stroke(); // Stroked triangle
                 }
+            } else if (shape.type === 'number') { // New logic for numbers
+                ctx.font = `${shape.fontSize}px 'Press Start 2P', cursive`; // Set font for numbers
+                ctx.fillStyle = shape.color; // Set color for numbers
+                ctx.fillText(shape.number, shape.x, shape.y); // Draw the number
             }
         }
 
+        /**
+         * Undoes the last drawing action.
+         */
         function undo() {
             if (historyIndex >= 0) {
-                shapes.pop();
+                shapes.pop(); // Remove the last shape
                 historyIndex--;
-                drawAll();
-                socket.emit('draw', shapes);
+                drawAll(); // Redraw canvas
+                socket.emit('draw', shapes); // Emit updated shapes to server
             }
         }
 
+        /**
+         * Clears the entire canvas, including background image and all drawings.
+         */
         function clearCanvas() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            shapes = [];
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
+            shapes = []; // Clear all shapes
             historyIndex = -1;
-            backgroundImage = null;
-            imageRotationAngle = 0; // 回転角度をリセット
-            socket.emit('draw', shapes);
+            backgroundImage = null; // Clear background image
+            imageRotationAngle = 0; // Reset rotation
+            socket.emit('draw', shapes); // Emit empty shapes to server
         }
 
+        /**
+         * Clears only the drawings, keeping the background image if any.
+         */
         function clearDraw() {
-            const initialBackgroundImage = backgroundImage;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-             if (initialBackgroundImage) {
+            const initialBackgroundImage = backgroundImage; // Preserve background image
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
+            if (initialBackgroundImage) {
                 ctx.save();
                 ctx.translate(canvas.width / 2, canvas.height / 2);
                 ctx.rotate(imageRotationAngle * Math.PI / 180);
                 ctx.translate(-canvas.width / 2, -canvas.height / 2);
                 ctx.drawImage(initialBackgroundImage, 0, 0, canvas.width, canvas.height);
                 ctx.restore();
-             }
-            shapes = [];
+            }
+            shapes = []; // Clear only drawings
             historyIndex = -1;
-            imageRotationAngle = 0;
-            socket.emit('draw', shapes);
+            socket.emit('draw', shapes); // Emit updated shapes to server
         }
 
-function handleImageUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+        /**
+         * Handles image file upload, scales it to A3 size, and sets it as background.
+         * @param {Event} event - The file input change event.
+         */
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
 
-    const formData = new FormData();
-    formData.append('image', file);
+            const formData = new FormData();
+            formData.append('image', file);
 
-    fetch('/upload', {
-        method: 'POST',
-        body: formData
-    })
-    .then(res => res.json())
-    .then(data => {
-        const img = new Image();
-        img.onload = () => {
-            const a3WidthMM = 297;
-            const a3HeightMM = 420;
-            const dpi = 96;
-            const mmPerInch = 25.4;
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                const img = new Image();
+                img.onload = () => {
+                    const a3WidthMM = 297;
+                    const a3HeightMM = 420;
+                    const dpi = 96;
+                    const mmPerInch = 25.4;
 
-            const a3WidthPixels = (a3WidthMM / mmPerInch) * dpi;
-            const a3HeightPixels = (a3HeightMM / mmPerInch) * dpi;
+                    const a3WidthPixels = (a3WidthMM / mmPerInch) * dpi;
+                    const a3HeightPixels = (a3HeightMM / mmPerInch) * dpi;
 
-            canvasWidth = a3WidthPixels;
-            canvasHeight = a3HeightPixels;
-            canvas.width = a3WidthPixels;
-            canvas.height = a3HeightPixels;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            imageRotationAngle = 0;
+                    canvasWidth = a3WidthPixels;
+                    canvasHeight = a3HeightPixels;
+                    canvas.width = a3WidthPixels;
+                    canvas.height = a3HeightPixels;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    imageRotationAngle = 0; // Reset rotation on new image upload
 
-            const imgAspectRatio = img.width / img.height;
-            const canvasAspectRatio = a3WidthPixels / a3HeightPixels;
+                    const imgAspectRatio = img.width / img.height;
+                    const canvasAspectRatio = a3WidthPixels / a3HeightPixels;
 
-            let drawWidth = a3WidthPixels;
-            let drawHeight = a3HeightPixels;
+                    let drawWidth = a3WidthPixels;
+                    let drawHeight = a3HeightPixels;
 
-            if (imgAspectRatio > canvasAspectRatio) {
-                drawHeight = a3WidthPixels / imgAspectRatio;
-                drawWidth = a3WidthPixels;
-            } else {
-                drawWidth = a3HeightPixels * imgAspectRatio;
-                drawHeight = a3HeightPixels;
-            }
+                    // Calculate dimensions to fit image within A3 canvas while maintaining aspect ratio
+                    if (imgAspectRatio > canvasAspectRatio) {
+                        drawHeight = a3WidthPixels / imgAspectRatio;
+                        drawWidth = a3WidthPixels;
+                    } else {
+                        drawWidth = a3HeightPixels * imgAspectRatio;
+                        drawHeight = a3HeightPixels;
+                    }
 
-            const xOffset = (a3WidthPixels - drawWidth) / 2;
-            const yOffset = (a3HeightPixels - drawHeight) / 2;
+                    const xOffset = (a3WidthPixels - drawWidth) / 2;
+                    const yOffset = (a3HeightPixels - drawHeight) / 2;
 
-            backgroundImage = img;
-            ctx.drawImage(img, xOffset, yOffset, drawWidth, drawHeight);
+                    backgroundImage = img;
+                    ctx.drawImage(img, xOffset, yOffset, drawWidth, drawHeight);
 
-            shapes = [];
-            historyIndex = -1;
-            socket.emit('draw', shapes);
-        };
-        img.src = data.imageUrl;
-    });
-}
+                    shapes = []; // Clear existing drawings when a new image is uploaded
+                    historyIndex = -1;
+                    socket.emit('draw', shapes); // Emit empty shapes for new image
+                };
+                img.src = data.imageUrl; // Set image source from server response
+            });
+        }
 
-
+        /**
+         * Saves the current canvas content as a JPEG image.
+         */
         function saveCanvas() {
-            const dataURL = canvas.toDataURL('image/jpeg');
+            const dataURL = canvas.toDataURL('image/jpeg'); // Get canvas content as JPEG data URL
             const a = document.createElement('a');
             a.href = dataURL;
-            a.download = 'canvas_image.jpg';
+            a.download = 'canvas_image.jpg'; // Set download filename
             document.body.appendChild(a);
-            a.click();
+            a.click(); // Simulate click to trigger download
             document.body.removeChild(a);
         }
 
-       socket.on('connect', () => {
-    console.log('Connected to server!');
-    showMessage('Connected to server!');
-    socket.emit('getInitialDraw');
-});
-
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server!');
+            showMessage('Connected to server!');
+            socket.emit('getInitialDraw'); // Request initial drawing state from server
+        });
 
         socket.on('initialDraw', (initialShapes) => {
-            shapes = initialShapes;
+            shapes = initialShapes; // Set initial shapes
             historyIndex = shapes.length -1;
-            drawAll();
+            drawAll(); // Draw all initial shapes
         });
 
         socket.on('draw', (newShapes) => {
-            shapes = newShapes;
+            shapes = newShapes; // Update shapes from server
             historyIndex = shapes.length - 1;
-            drawAll();
+            drawAll(); // Redraw canvas with new shapes
         });
 
+        /**
+         * Displays a temporary message box.
+         * @param {string} message - The message to display.
+         */
         function showMessage(message) {
             messageBox.textContent = message;
             messageBox.classList.add('show-message');
             setTimeout(() => {
                 messageBox.classList.remove('show-message');
-            }, 3000);
+            }, 3000); // Message disappears after 3 seconds
         }
 
+        /**
+         * Rotates the background image by 90 degrees.
+         */
         function rotateImage() {
             imageRotationAngle += 90;
-            drawAll();
-            socket.emit('rotateImage', imageRotationAngle); // サーバーに画像の回転角度を送信
+            drawAll(); // Redraw with new rotation
+            socket.emit('rotateImage', imageRotationAngle); // Inform server about rotation
         }
 
-socket.on('rotateImage', (newRotation) => {
-    imageRotationAngle = newRotation;
-    drawAll();
-});
+        socket.on('rotateImage', (newRotation) => {
+            imageRotationAngle = newRotation; // Update rotation from server
+            drawAll(); // Redraw with new rotation
+        });
 
-socket.emit('getInitialDraw');
+        socket.on('imageUrl', (url) => {
+            const img = new Image();
+            img.onload = () => {
+                backgroundImage = img;
+                drawAll();
+            };
+            img.src = url;
+        });
 
-socket.on('imageUrl', (url) => {
-    const img = new Image();
-    img.onload = () => {
-        backgroundImage = img;
-        drawAll();
-    };
-    img.src = url;
-});
+        // Initialize tool to 'line' and update button states on load
+        setTool('line');
+        // Request initial drawing state from server after all setup
+        socket.emit('getInitialDraw');
 
     </script>
 </body>
