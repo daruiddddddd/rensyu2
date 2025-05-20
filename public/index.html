@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>リアルタイム画像注釈ツール</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+</head>
+<body class="bg-gray-100 text-center p-4">
+  <div id="controls" class="space-x-2 mb-4">
+    <input type="file" id="imageUpload" accept="image/*"/>
+    <button id="undoButton">戻る</button>
+    <button id="clearButton">全消去</button>
+    <button id="clearDrawButton">描画のみ消去</button>
+  </div>
+  <canvas id="mainCanvas" class="border bg-white w-full max-w-4xl aspect-video"></canvas>
+  <script>
+    const canvas = document.getElementById('mainCanvas');
+    const ctx = canvas.getContext('2d');
+    const socket = io();
+    let shapes = [], backgroundImage = null, imageRotationAngle = 0;
+
+    canvas.width = 1000; canvas.height = 700;
+
+    function drawAll() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (backgroundImage) ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+      shapes.forEach(shape => drawShape(shape));
+    }
+
+    function drawShape(shape) {
+      ctx.strokeStyle = shape.color || 'black';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(shape.startX, shape.startY);
+      ctx.lineTo(shape.endX, shape.endY);
+      ctx.stroke();
+    }
+
+    document.getElementById('imageUpload').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      const formData = new FormData();
+      formData.append('image', file);
+      await fetch('/upload', { method: 'POST', body: formData });
+      socket.emit('getInitialDraw');
+    });
+
+    socket.on('initialDraw', data => {
+      shapes = data;
+      drawAll();
+    });
+    socket.on('imageUrl', url => {
+      const img = new Image();
+      img.onload = () => {
+        backgroundImage = img;
+        drawAll();
+      };
+      img.src = url;
+    });
+    socket.on('draw', data => { shapes = data; drawAll(); });
+
+    document.getElementById('undoButton').onclick = () => {
+      shapes.pop();
+      socket.emit('draw', shapes);
+    };
+    document.getElementById('clearButton').onclick = () => {
+      shapes = []; backgroundImage = null;
+      socket.emit('draw', shapes);
+    };
+    document.getElementById('clearDrawButton').onclick = () => {
+      shapes = [];
+      socket.emit('draw', shapes);
+      drawAll();
+    };
+
+    socket.emit('getInitialDraw');
+  </script>
+</body>
+</html>
